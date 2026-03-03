@@ -1,6 +1,13 @@
 ---
 board: Mon Projet
-labels: [backend, frontend, urgent, design]
+labels:
+  - backend
+  - name: design
+    color: purple
+  - name: frontend
+    color: sky
+  - name: urgent
+    color: red
 ---
 
 ---

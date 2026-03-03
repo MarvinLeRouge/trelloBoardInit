@@ -22,6 +22,12 @@ import requests
 import yaml
 from dotenv import load_dotenv
 
+TRELLO_COLORS = [
+    "green", "yellow", "orange", "red", "purple",
+    "blue", "sky", "lime", "pink", "black"
+]
+VALID_COLORS = set(TRELLO_COLORS)
+
 # ---------------------------------------------------------------------------
 # Logging setup
 # ---------------------------------------------------------------------------
@@ -69,8 +75,19 @@ def parse_markdown(filepath: Path) -> tuple[dict, list[dict]]:
     header = yaml.safe_load(match.group(1))
     if not isinstance(header.get("labels"), list):
         header["labels"] = []
-    header["labels"] = [str(l).strip() for l in header["labels"]]
+    def normalize_labels(raw):
+        result = []
+        for l in raw:
+            if isinstance(l, dict):
+                result.append({"name": str(l.get("name", "")).strip(), "color": l.get("color")})
+            elif isinstance(l, str) and l.startswith("{"):
+                # Cas corrompu — ignorer silencieusement ou logger un warning
+                continue
+            else:
+                result.append({"name": str(l).strip(), "color": None})
+        return result
 
+    header["labels"] = normalize_labels(header["labels"])
     rest = raw[match.end():].strip()
 
     # Extract individual cards
@@ -101,12 +118,12 @@ def check_and_fix_labels(filepath: Path, header: dict, cards: list[dict], logger
     If any are missing from the header, add them and rewrite the file.
     Returns updated header.
     """
-    declared = set(header["labels"])
-    used = set()
+    declared_names = {l["name"] for l in header["labels"]}
+    used_names = set()
     for card in cards:
-        used.update(card["labels"])
+        used_names.update(card["labels"])
 
-    missing = used - declared
+    missing = used_names - declared_names
     if not missing:
         logger.info("✅ Label coherence OK — all card labels are declared in header.")
         return header
@@ -114,11 +131,20 @@ def check_and_fix_labels(filepath: Path, header: dict, cards: list[dict], logger
     logger.warning(f"⚠️  Labels used in cards but missing from header: {sorted(missing)}")
     logger.info("   → Auto-fixing header in the markdown file...")
 
-    header["labels"] = sorted(declared | missing)
+    for name in sorted(missing):
+        header["labels"].append({"name": name, "color": None})
+
+    # Sérialiser proprement : string si pas de couleur, dict imbriqué si couleur
+    serialized_labels = []
+    for l in header["labels"]:
+        if l.get("color"):
+            serialized_labels.append({"name": l["name"], "color": l["color"]})
+        else:
+            serialized_labels.append(l["name"])
 
     raw = filepath.read_text(encoding="utf-8")
     new_header_yaml = yaml.dump(
-        {"board": header.get("board"), "labels": header["labels"]},
+        {"board": header.get("board"), "labels": serialized_labels},
         default_flow_style=False,
         allow_unicode=True,
     ).strip()
@@ -128,7 +154,6 @@ def check_and_fix_labels(filepath: Path, header: dict, cards: list[dict], logger
     logger.info(f"   → File updated. Added labels: {sorted(missing)}")
 
     return header
-
 
 # ---------------------------------------------------------------------------
 # Trello API client
@@ -169,11 +194,18 @@ class TrelloClient:
     def create_list(self, board_id: str, name: str) -> dict:
         return self._post("/lists", {"name": name, "idBoard": board_id})
 
-    def get_labels(self, board_id: str) -> list[dict]:
-        return self._get(f"/boards/{board_id}/labels", {"fields": "id,name"})
+    def create_label(self, board_id: str, name: str, color: str | None) -> dict:
+        return self._post("/labels", {"name": name, "color": color, "idBoard": board_id})
 
-    def create_label(self, board_id: str, name: str) -> dict:
-        return self._post("/labels", {"name": name, "color": None, "idBoard": board_id})
+    # Et get_labels : ajouter "color" dans les fields
+    def get_labels(self, board_id: str) -> list[dict]:
+        return self._get(f"/boards/{board_id}/labels", {"fields": "id,name,color"})
+
+    def delete_label(self, label_id: str) -> None:
+        if self.dry_run:
+            return
+        r = requests.delete(f"{self.BASE}/labels/{label_id}", params=self.auth)
+        r.raise_for_status()
 
     def get_cards(self, list_id: str) -> list[dict]:
         return self._get(f"/lists/{list_id}/cards", {"fields": "id,name"})
@@ -246,7 +278,7 @@ def run(
         logger.error(f"❌ Duplicate card titles in file: {duplicates}")
         logger.error("   → Fix your markdown file before proceeding.")
         return False
-    logger.info("✅ No duplicate card titles in file.")
+    logger.info("✅ No duplicate caurgentrd titles in file.")
 
     client = TrelloClient(api_key, token, logger, dry_run=dry_run)
 
@@ -313,14 +345,31 @@ def run(
             logger.error(f"❌ Failed to get/create Backlog list: {e}")
             return False
 
+    # Passe 1.5 — Nettoyage des labels par défaut (board neuf uniquement)
+    if not dry_run and stats["board"] == "created":
+        logger.info("Passe 1.5 — Cleaning default board labels")
+        try:
+            default_labels = client.get_labels(board_id)
+            for dl in default_labels:
+                if not dl.get("name"):  # labels vides = labels par défaut Trello
+                    client.delete_label(dl["id"])
+                    logger.info(f"🗑️  Deleted default empty label '{dl['id']}'")
+        except Exception as e:
+            logger.warning(f"⚠️  Could not clean default labels: {e}")
+
     # --- Passe 2: Labels ---
     logger.info(f"{prefix}Passe 2 — Labels")
     label_map = {}
 
     if dry_run:
-        for label_name in header["labels"]:
-            logger.info(f"[DRY-RUN] 🏷️  Would ensure label '{label_name}' exists.")
-            label_map[label_name] = f"DRY_{label_name}"
+        color_index = 0
+        for label in header["labels"]:
+            name = label["name"]
+            color = label.get("color") or TRELLO_COLORS[color_index % len(TRELLO_COLORS)]
+            if not label.get("color"):
+                color_index += 1
+            logger.info(f"[DRY-RUN] 🏷️  Would ensure label '{name}' (color: {color}).")
+            label_map[name] = f"DRY_{name}"
     else:
         try:
             existing_labels = client.get_labels(board_id)
@@ -328,21 +377,33 @@ def run(
             logger.error(f"❌ Cannot fetch labels: {e}")
             return False
 
-        existing_map = {l["name"]: l["id"] for l in existing_labels if l.get("name")}
+        existing_map = {l["name"]: l for l in existing_labels if l.get("name")}
+        existing_color_map = {l["name"]: l.get("color") for l in existing_labels if l.get("name")}
 
-        for label_name in header["labels"]:
-            if label_name in existing_map:
-                label_map[label_name] = existing_map[label_name]
-                logger.info(f"✅ Label '{label_name}' already exists.")
+        color_index = 0
+        for label in header["labels"]:
+            name = label["name"]
+
+            # Priorité : couleur déclarée > couleur existante sur le board > rotation auto
+            color = label.get("color")
+            if not color and name in existing_color_map:
+                color = existing_color_map[name]
+            if not color:
+                color = TRELLO_COLORS[color_index % len(TRELLO_COLORS)]
+                color_index += 1
+
+            if name in existing_map:
+                label_map[name] = existing_map[name]["id"]
+                logger.info(f"✅ Label '{name}' already exists (color: {existing_map[name].get('color')}).")
                 stats["labels_existing"] += 1
             else:
                 try:
-                    new_label = client.create_label(board_id, label_name)
-                    label_map[label_name] = new_label["id"]
-                    logger.info(f"➕ Label '{label_name}' created.")
+                    new_label = client.create_label(board_id, name, color)
+                    label_map[name] = new_label["id"]
+                    logger.info(f"➕ Label '{name}' created (color: {color}).")
                     stats["labels_created"] += 1
                 except Exception as e:
-                    logger.error(f"❌ Failed to create label '{label_name}': {e}")
+                    logger.error(f"❌ Failed to create label '{name}': {e}")
                     stats["errors"] += 1
 
     # --- Passe 3: Cards ---
