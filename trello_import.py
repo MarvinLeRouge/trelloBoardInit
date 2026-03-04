@@ -22,6 +22,8 @@ import requests
 import yaml
 from dotenv import load_dotenv
 
+DEFAULT_LISTS = ["📥 Backlog", "📅 Cette semaine", "🔄 En cours", "✅ Done"]
+BACKLOG_NAME = DEFAULT_LISTS[0]
 TRELLO_COLORS = [
     "green", "yellow", "orange", "red", "purple",
     "blue", "sky", "lime", "pink", "black"
@@ -329,22 +331,25 @@ def run(
     # Backlog list
     if dry_run:
         list_id = "DRY_RUN_LIST_ID"
-        logger.info("[DRY-RUN] 📋 Would ensure 'Backlog' list exists.")
+        logger.info(f"[DRY-RUN] 📋 Would ensure lists {DEFAULT_LISTS} exist.")
     else:
         try:
-            lists = client.get_lists(board_id)
-            backlog = next((l for l in lists if l["name"].lower() == "backlog"), None)
-            if backlog:
-                list_id = backlog["id"]
-                logger.info("✅ 'Backlog' list already exists.")
-            else:
-                bl = client.create_list(board_id, "Backlog")
-                list_id = bl["id"]
-                logger.info("➕ 'Backlog' list created.")
-        except Exception as e:
-            logger.error(f"❌ Failed to get/create Backlog list: {e}")
-            return False
+            existing_lists = client.get_lists(board_id)
+            existing_names = {l["name"]: l["id"] for l in existing_lists}
 
+            for list_name in reversed(DEFAULT_LISTS):
+                if list_name not in existing_names:
+                    created = client.create_list(board_id, list_name)
+                    existing_names[list_name] = created["id"]
+                    logger.info(f"➕ List '{list_name}' created.")
+                else:
+                    logger.info(f"✅ List '{list_name}' already exists.")
+
+            list_id = existing_names[BACKLOG_NAME]
+        except Exception as e:
+            logger.error(f"❌ Failed to get/create lists: {e}")
+            return False
+        
     # Passe 1.5 — Nettoyage des labels par défaut (board neuf uniquement)
     if not dry_run and stats["board"] == "created":
         logger.info("Passe 1.5 — Cleaning default board labels")
