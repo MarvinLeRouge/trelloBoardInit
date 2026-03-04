@@ -47,4 +47,9 @@ documentation/work-in-progress
 
 # Src
 src/*
+!src/.gitkeep
 !src/example_tasks.md
+
+# Logs
+logs/*
+!logs/.gitkeep
