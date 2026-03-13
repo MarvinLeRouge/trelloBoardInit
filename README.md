@@ -4,7 +4,14 @@
 
 # Version Française
 
-# Trello Board Init 🗂️
+# 📋 Trello Board Init
+
+> *CLI Python pour générer automatiquement des boards Trello depuis un fichier Markdown — dry-run, idempotence, logs horodatés.*
+
+![Python](https://img.shields.io/badge/Python-3.9+-3776AB?logo=python&logoColor=white)
+![License](https://img.shields.io/github/license/MarvinLeRouge/Trello-Board-Init)
+
+## Concept
 
 Importe automatiquement une todo list au format Markdown dans un board Trello, en créant le board, les listes, les labels et les cartes via l'API Trello.
 
@@ -250,7 +257,14 @@ Ce projet est sous licence MIT - voir le fichier [LICENSE](LICENSE) pour plus de
 
 # English Version
 
-# Trello Board Init 🗂️
+# 📋 Trello Board Init
+
+> *Python CLI to scaffold Trello boards from a Markdown file — dry-run, idempotence, timestamped logs.*
+
+![Python](https://img.shields.io/badge/Python-3.9+-3776AB?logo=python&logoColor=white)
+![License](https://img.shields.io/github/license/MarvinLeRouge/Trello-Board-Init)
+
+## Concept
 
 Automatically imports a Markdown todo list into a Trello board, creating the board, lists, labels and cards via the Trello API.
 
